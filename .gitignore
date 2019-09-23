@@ -2,3 +2,5 @@
 target/*
 *.temp
 *.log
+.idea/*
+ui.xml
