@@ -34,12 +34,7 @@
            </plugins>
         </pluginManagement>
         <resources>
-            <resource>
-                <directory>E:\idea\rainbow-brige\properties></directory>
-                <includes>
-                    <include>*.properties</include>
-                </includes>
-            </resource>
+
         </resources>
     </build>
     <dependencyManagement>
