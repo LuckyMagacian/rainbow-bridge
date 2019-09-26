@@ -46,7 +46,7 @@ public class RbClientBootstrap {
         Thread.sleep(3000);
         ctx.close(Constants.LOCAL_HOST,7788);
         Thread.sleep(1000);
-        ctx.shutdown();
+        ctx.close();
     }
 
 }

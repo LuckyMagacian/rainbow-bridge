@@ -5,11 +5,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
-import io.netty.channel.epoll.EpollServerSocketChannel;
-import io.netty.channel.epoll.EpollSocketChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import top.whiteyang.br.common.constant.Constants;
@@ -21,6 +17,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import top.whiteyang.br.common.container.Context;
+import top.whiteyang.br.common.facade.Closable;
+import top.whiteyang.br.common.facade.Initializable;
+import top.whiteyang.br.common.factory.BootstrapFactory;
+import top.whiteyang.br.common.factory.ServerBootstrapFactory;
 
 /**
  * │＼＿＿╭╭╭╭╭＿＿／│
@@ -41,40 +42,63 @@ import java.util.concurrent.ConcurrentHashMap;
  * email: yangyuanjian@outlook.com
  * time:2019-09-23 周一 20:13
  */
-public class ClientContext{
+public class ClientContext implements Context, Closable, Initializable {
+    /**serverbootstrap's childhandler*/
     private List<ChannelHandler> serverHandlers=null;
-
+    /**serverbootstrap*/
     private ServerBootstrap serverBootstrap=null;
+    /**server channel*/
     private Channel serverChannel=null;
+    /**
+     * Map{
+     *     "boss":bossLoopGroup,
+     *     "worker":workerLoopGroup
+     * }
+     */
     private Map<String,EventLoopGroup> loopGroupMap=new ConcurrentHashMap<>();
 
-
+    /**
+     * Map{
+     *     key = host:port
+     *     value = bootstrap's handler
+     * }
+     */
     private Map<String,List<ChannelHandler>> clientHandlers=new ConcurrentHashMap<>();
+    /**
+     * bootstrap's loopgroup list
+     */
     private List<EventLoopGroup> clientLoopGroup=new ArrayList<>();
+    /**
+     * bootstrapmap
+     * host:port -> boostrap
+     * boostrap -> host:port
+     */
     private BootstrapMap bootstrapMap =new BootstrapMap();
+    /**
+     * channel map
+     * host:port -> channel
+     * channel -> host:port
+     */
     private ChannelMap channelMap =new ChannelMap();
 
-    private Random random=new Random();
+    private BootstrapFactory bootstrapFactory=null;
+    private ServerBootstrapFactory serverBootstrapFactory=null;
     private Logger logger= LoggerFactory.getLogger(ClientContext.class);
     public ClientContext(){
         init();
     }
-
+    /**
+     * client listen local port
+     * @param port listen port
+     * @param handlers serverboostrap's handlers
+     */
     public synchronized void listen(int port,final List<ChannelHandler> handlers){
         if(null!=serverBootstrap){
             throw new IllegalStateException("unsupport multiple server port !");
         }
-        serverBootstrap=serverBootSupplier(port);
+        serverBootstrap=serverBootstrapFactory.get(port,handlers);
         try {
             serverHandlers=handlers;
-            if(null!=handlers&&!handlers.isEmpty()) {
-                serverBootstrap.childHandler(new ChannelInitializer<Channel>() {
-                    @Override
-                    protected void initChannel(Channel ch) {
-                        handlers.forEach(ch.pipeline()::addLast);
-                    }
-                });
-            }
             ChannelFuture channelFuture=serverBootstrap.bind().sync();
             if(channelFuture.isSuccess()){
                 logger.info("bind success !");
@@ -84,23 +108,22 @@ public class ClientContext{
             }
         }catch (Exception e){
             logger.error("exception occured when bind:{}",port);
-            shutdown();
+            close();
         }
     }
+
+    /**
+     * create boostrap & channel to host:port
+     * @param host remote host
+     * @param port remote port
+     * @param handlers boostrap's handler
+     */
     public synchronized void connect(String host,int port,List<ChannelHandler> handlers){
         try {
             String key=host+port;
             clientHandlers.put(key,handlers);
             if(null== bootstrapMap.get(host,port)){
-                Bootstrap bootstrap=bootSupplier(host,port);
-                if(null!=handlers&&!handlers.isEmpty()) {
-                    bootstrap.handler(new ChannelInitializer<Channel>() {
-                        @Override
-                        protected void initChannel(Channel ch){
-                            handlers.forEach(ch.pipeline()::addLast);
-                        }
-                    });
-                }
+                Bootstrap bootstrap=bootstrapFactory.get(host,port,handlers);
                 ChannelFuture future=bootstrap.connect().sync();
                 if(future.isSuccess()){
                     logger.info("connect {}:{} success !",host,port);
@@ -111,9 +134,15 @@ public class ClientContext{
             }
         } catch (Exception e) {
             logger.error("exception occured when connect {}:{}",host,port,e);
-            shutdown();
+            close();
         }
     }
+
+    /**
+     * close remote channel (host:port)
+     * @param host
+     * @param port
+     */
     public synchronized void close(String host,int port){
         Channel channel=channelMap.get(host,port);
         if(null!=channel){
@@ -126,7 +155,42 @@ public class ClientContext{
             });
         }
     }
-    public synchronized void shutdown(){
+    /**
+     * write data to remote host:port
+     * @param host remote host
+     * @param port remote port
+     * @param data data
+     * @return return true on success else return false
+     */
+    public boolean write(String host,int port,byte[] data){
+        Channel channel=channelMap.get(host,port);
+        if(null!=channel){
+            channel.writeAndFlush(data);
+            return true;
+        }else{
+            throw new IllegalArgumentException(String.format("not connect to %s:%d",host,port));
+        }
+    }
+
+
+    /**
+     * init loopgroup
+     */
+    @Override
+    public void init(){
+        int threadNum=Runtime.getRuntime().availableProcessors()*2;
+        loopGroupMap.put(Constants.BOSS,Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
+        loopGroupMap.put(Constants.WORKER,Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
+        clientLoopGroup.add(Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
+        bootstrapFactory=new BootstrapFactory.DefaultBootstrapFactory();
+        serverBootstrapFactory=new ServerBootstrapFactory.DefaultServerBootstrapFactory();
+    }
+    /**
+     * shutdown client
+     * close loopgroup & channel
+     */
+    @Override
+    public synchronized void close(){
         try {
             if(null!=serverChannel){
                 serverChannel.closeFuture().addListener(f->{
@@ -151,44 +215,19 @@ public class ClientContext{
             logger.error("exception occured when shutdown !",e);
         }
     }
-    public boolean write(String host,int port,byte[] data){
-        Channel channel=channelMap.get(host,port);
-        if(null!=channel){
-            channel.writeAndFlush(data);
-            return true;
-        }else{
-            throw new IllegalArgumentException(String.format("not connect to %s:%d",host,port));
-        }
-    }
-
-
-    private ServerBootstrap serverBootSupplier(int port){
-        ServerBootstrap serverBootstrap=new ServerBootstrap();
-        EventLoopGroup boss=loopGroupMap.get(Constants.BOSS);
-        EventLoopGroup worker=loopGroupMap.get(Constants.WORKER);
-        serverBootstrap.group(boss,worker);
-        serverBootstrap.channel(Epoll.isAvailable()? EpollServerSocketChannel.class: NioServerSocketChannel.class);
-        serverBootstrap.localAddress(Constants.LOCAL_HOST,port);
+    @Override public ServerBootstrap getServerBootstrap() {
         return serverBootstrap;
     }
-    private Bootstrap bootSupplier(String host,int port){
-        EventLoopGroup loopGroup;
-        Bootstrap bootstrap=new Bootstrap();
-        if(clientLoopGroup.size()>1){
-            loopGroup=clientLoopGroup.get(random.nextInt(clientLoopGroup.size()));
-        }else{
-            loopGroup=clientLoopGroup.get(0);
-        }
-        bootstrap.group(loopGroup);
-        bootstrap.remoteAddress(host,port);
-        bootstrap.channel(Epoll.isAvailable()? EpollSocketChannel.class: NioSocketChannel.class);
-        return bootstrap;
-    }
-    private void init(){
-        int threadNum=Runtime.getRuntime().availableProcessors()*2;
-        loopGroupMap.put(Constants.BOSS,Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
-        loopGroupMap.put(Constants.WORKER,Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
-        clientLoopGroup.add(Epoll.isAvailable()?new EpollEventLoopGroup(threadNum):new NioEventLoopGroup(threadNum));
+
+    @Override public Channel getServerChannel() {
+        return serverChannel;
     }
 
+    @Override public Bootstrap getBootstrap(String host, int port) {
+        return bootstrapMap.get(host,port);
+    }
+
+    @Override public Channel getChannel(String host, int port) {
+        return channelMap.get(host,port);
+    }
 }
