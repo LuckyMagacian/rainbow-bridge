@@ -15,4 +15,13 @@
       </profile>
     </annotationProcessing>
   </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="rb-client" options="-parameters" />
+      <module name="rb-common" options="-parameters" />
+      <module name="rb-registry" options="-parameters" />
+      <module name="rb-remote" options="-parameters" />
+      <module name="rb-server" options="-parameters" />
+    </option>
+  </component>
 </project>
