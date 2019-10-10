@@ -4,6 +4,7 @@ import io.netty.channel.Channel;
 import top.whiteyang.br.common.constant.Constants;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -55,6 +56,6 @@ public class ChannelMap{
         return hostMapChannel.isEmpty()&&channelMapHost.isEmpty();
     }
     public Collection<Channel> channels(){
-        return hostMapChannel.values();
+        return Collections.unmodifiableCollection(hostMapChannel.values());
     }
 }

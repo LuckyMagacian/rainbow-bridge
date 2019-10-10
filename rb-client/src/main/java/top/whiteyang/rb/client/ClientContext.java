@@ -6,22 +6,23 @@ import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import top.whiteyang.br.common.constant.Constants;
 import top.whiteyang.br.common.container.BootstrapMap;
 import top.whiteyang.br.common.container.ChannelMap;
+import top.whiteyang.br.common.container.Context;
+import top.whiteyang.br.common.facade.Closeable;
+import top.whiteyang.br.common.facade.Initializable;
+import top.whiteyang.br.common.factory.BootstrapFactory;
+import top.whiteyang.br.common.factory.ServerBootstrapFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
-import top.whiteyang.br.common.container.Context;
-import top.whiteyang.br.common.facade.Closable;
-import top.whiteyang.br.common.facade.Initializable;
-import top.whiteyang.br.common.factory.BootstrapFactory;
-import top.whiteyang.br.common.factory.ServerBootstrapFactory;
+import java.util.function.Supplier;
 
 /**
  * │＼＿＿╭╭╭╭╭＿＿／│
@@ -42,13 +43,13 @@ import top.whiteyang.br.common.factory.ServerBootstrapFactory;
  * email: yangyuanjian@outlook.com
  * time:2019-09-23 周一 20:13
  */
-public class ClientContext implements Context, Closable, Initializable {
+public class ClientContext implements Context, Closeable, Initializable {
     /**serverbootstrap's childhandler*/
-    private List<ChannelHandler> serverHandlers=null;
+    private List<Supplier<ChannelHandler>> serverHandlerSupplier=null;
     /**serverbootstrap*/
     private ServerBootstrap serverBootstrap=null;
     /**server channel*/
-    private Channel serverChannel=null;
+    private ServerChannel serverChannel=null;
     /**
      * Map{
      *     "boss":bossLoopGroup,
@@ -63,7 +64,7 @@ public class ClientContext implements Context, Closable, Initializable {
      *     value = bootstrap's handler
      * }
      */
-    private Map<String,List<ChannelHandler>> clientHandlers=new ConcurrentHashMap<>();
+    private Map<String,List<Supplier<ChannelHandler>>> handlerSuppliers =new ConcurrentHashMap<>();
     /**
      * bootstrap's loopgroup list
      */
@@ -80,34 +81,33 @@ public class ClientContext implements Context, Closable, Initializable {
      * channel -> host:port
      */
     private ChannelMap channelMap =new ChannelMap();
-
+    private Logger log= LoggerFactory.getLogger(ClientContext.class);
     private BootstrapFactory bootstrapFactory=null;
     private ServerBootstrapFactory serverBootstrapFactory=null;
-    private Logger logger= LoggerFactory.getLogger(ClientContext.class);
     public ClientContext(){
         init();
     }
     /**
      * client listen local port
      * @param port listen port
-     * @param handlers serverboostrap's handlers
+     * @param suppliers serverboostrap's handlers
      */
-    public synchronized void listen(int port,final List<ChannelHandler> handlers){
+    public synchronized void listen(int port,final List<Supplier<ChannelHandler>> suppliers){
         if(null!=serverBootstrap){
             throw new IllegalStateException("unsupport multiple server port !");
         }
-        serverBootstrap=serverBootstrapFactory.get(port,handlers);
+        serverBootstrap=serverBootstrapFactory.get(port,suppliers);
         try {
-            serverHandlers=handlers;
+            serverHandlerSupplier=suppliers;
             ChannelFuture channelFuture=serverBootstrap.bind().sync();
             if(channelFuture.isSuccess()){
-                logger.info("bind success !");
-                serverChannel=channelFuture.channel();
+                log.info("bind success !");
+                serverChannel= (ServerChannel) channelFuture.channel();
             }else{
-                logger.error("bind fail !",channelFuture.cause());
+                log.error("bind fail !",channelFuture.cause());
             }
         }catch (Exception e){
-            logger.error("exception occured when bind:{}",port);
+            log.error("exception occured when bind:{}",port);
             close();
         }
     }
@@ -116,24 +116,24 @@ public class ClientContext implements Context, Closable, Initializable {
      * create boostrap & channel to host:port
      * @param host remote host
      * @param port remote port
-     * @param handlers boostrap's handler
+     * @param suppliers handler'supp;ier
      */
-    public synchronized void connect(String host,int port,List<ChannelHandler> handlers){
+    public synchronized void connect(String host,int port,List<Supplier<ChannelHandler>> suppliers){
         try {
             String key=host+port;
-            clientHandlers.put(key,handlers);
+            handlerSuppliers.put(key,suppliers);
             if(null== bootstrapMap.get(host,port)){
-                Bootstrap bootstrap=bootstrapFactory.get(host,port,handlers);
+                Bootstrap bootstrap=bootstrapFactory.get(host,port,suppliers);
                 ChannelFuture future=bootstrap.connect().sync();
                 if(future.isSuccess()){
-                    logger.info("connect {}:{} success !",host,port);
+                    log.info("connect {}:{} success !",host,port);
                     channelMap.put(host,port,future.channel());
                 }else{
-                    logger.error("connect {}:{} fail !",host,port,future.cause());
+                    log.error("connect {}:{} fail !",host,port,future.cause());
                 }
             }
         } catch (Exception e) {
-            logger.error("exception occured when connect {}:{}",host,port,e);
+            log.error("exception occured when connect {}:{}",host,port,e);
             close();
         }
     }
@@ -148,9 +148,9 @@ public class ClientContext implements Context, Closable, Initializable {
         if(null!=channel){
             channel.closeFuture().addListener(f->{
                 if(f.isSuccess()){
-                    logger.info("close channel {}:{} success !",host,port);
+                    log.info("close channel {}:{} success !",host,port);
                 }else{
-                    logger.error("close channe {}:{} fail",host,port,f.cause());
+                    log.error("close channe {}:{} fail",host,port,f.cause());
                 }
             });
         }
@@ -195,9 +195,9 @@ public class ClientContext implements Context, Closable, Initializable {
             if(null!=serverChannel){
                 serverChannel.closeFuture().addListener(f->{
                     if(f.isSuccess()){
-                        logger.info("server channel close success !");
+                        log.info("server channel close success !");
                     }else{
-                        logger.error("server channel close fail ! ");
+                        log.error("server channel close fail ! ");
                         f.cause().printStackTrace();
                     }
                 });
@@ -212,7 +212,7 @@ public class ClientContext implements Context, Closable, Initializable {
                 clientLoopGroup.forEach(EventLoopGroup::shutdownGracefully);
             }
         } catch (Exception e) {
-            logger.error("exception occured when shutdown !",e);
+            log.error("exception occured when shutdown !",e);
         }
     }
     @Override public ServerBootstrap getServerBootstrap() {

@@ -1,4 +1,4 @@
-package top.whiteyang.br.common.handler;
+package top.whiteyang.br.common.handler.inbound;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandler;

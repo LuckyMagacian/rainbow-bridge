@@ -1,16 +1,17 @@
 package top.whiteyang.rb.server;
 
-import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.epoll.Epoll;
-import io.netty.channel.epoll.EpollEventLoopGroup;
-import io.netty.channel.epoll.EpollServerSocketChannel;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
-import top.whiteyang.br.common.handler.InboundLogHandler;
+import io.netty.channel.ChannelHandler;
+import io.netty.handler.codec.http.HttpObjectAggregator;
+import io.netty.handler.codec.http.HttpRequestDecoder;
+import io.netty.handler.codec.http.HttpResponseEncoder;
+import top.whiteyang.br.common.handler.inbound.EchoHandler;
+import top.whiteyang.br.common.handler.inbound.HttpContentEchoHandler;
+import top.whiteyang.br.common.handler.inbound.InboundLogHandler;
+import top.whiteyang.br.common.handler.outbound.OutboundLogHandler;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * │＼＿＿╭╭╭╭╭＿＿／│
@@ -33,54 +34,10 @@ import top.whiteyang.br.common.handler.InboundLogHandler;
  */
 public class RbServerBootstrap {
     public static void main(String[] args){
-        EventLoopGroup bossGroup=null;
-        EventLoopGroup workerGroup=null;
-        ServerBootstrap serverBootstrap=null;
-        ChannelFuture future=null;
-        try {
-            boolean epoll=Epoll.isAvailable();
-            bossGroup= epoll?new EpollEventLoopGroup(): new NioEventLoopGroup();
-            workerGroup= epoll?new EpollEventLoopGroup(): new NioEventLoopGroup();
-
-            serverBootstrap=new ServerBootstrap();
-            serverBootstrap.group(bossGroup,workerGroup);
-            serverBootstrap.channel(epoll?EpollServerSocketChannel.class: NioServerSocketChannel.class);
-            serverBootstrap.childHandler(new ChannelInitializer<Channel>() {
-                @Override
-                protected void initChannel(Channel ch) throws Exception {
-                    ch.pipeline()
-//                            .addLast(new StringEncoder())
-//                            .addLast(new StringDecoder())
-                            .addLast(new InboundLogHandler());
-                }
-            });
-            serverBootstrap.localAddress(9966);
-            future=serverBootstrap.bind().addListener(f->{
-                if(f.isSuccess()){
-                    System.err.println("bind success !");
-                }else{
-                    System.err.println("bind fail!");
-                    f.cause().printStackTrace();
-                }
-            });
-        } catch (Exception e){
-            if(null!=future){
-                e.printStackTrace();
-                future.channel().closeFuture().addListener(f->{
-                    if(f.isSuccess()){
-                        System.err.println("close success !");
-                    }else{
-                        System.err.println("close fail !");
-                        f.cause().printStackTrace();
-                    }
-                });
-            }
-            if(null!=bossGroup){
-                bossGroup.shutdownGracefully();
-            }
-            if(null!=workerGroup){
-                workerGroup.shutdownGracefully();
-            }
-        }
+        ServerContext serverContext=new ServerContext();
+        List<Supplier<ChannelHandler>> list=new ArrayList<>();
+        list.add(InboundLogHandler::new);
+        list.add(EchoHandler::new);
+        serverContext.listen(6789,list);
     }
 }
