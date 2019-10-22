@@ -15,7 +15,7 @@
     <properties>
         <spring.boot.version>2.1.8.RELEASE</spring.boot.version>
         <fastjson.version>1.2.61</fastjson.version>
-        <netty.version>4.1.41.Final</netty.version>
+        <netty.version>4.1.42.Final</netty.version>
     </properties>
     <modules>
         <module>rb-server</module>
